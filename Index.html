@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Penghitung Orang</title>
+<style>
+  :root{--bg:#10151a;--panel:#1b232b;--ink:#eef3f6;--mute:#8fa0ad;--acc:#3fd0b0;--warn:#ffb454;color-scheme:dark}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  body{display:flex;flex-direction:column;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+  .stage{position:relative;flex:1;min-height:0;background:#000;overflow:hidden}
+  video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .count{position:absolute;left:12px;top:12px;background:rgba(16,21,26,.82);border-radius:14px;padding:8px 16px;display:flex;align-items:baseline;gap:8px}
+  .count b{font-size:56px;line-height:1;font-variant-numeric:tabular-nums;color:var(--acc)}
+  .count span{font-size:15px;color:var(--mute)}
+  .msg{position:absolute;inset:auto 12px 12px 12px;background:rgba(16,21,26,.88);border-radius:12px;padding:12px 14px;font-size:15px;line-height:1.4}
+  .msg.err{color:var(--warn)}
+  .bar{display:flex;gap:10px;padding:12px;background:var(--panel)}
+  .stat{flex:1;font-size:14px;color:var(--mute)}
+  .stat strong{display:block;font-size:22px;color:var(--ink);font-variant-numeric:tabular-nums}
+  button{font:inherit;font-weight:600;border:0;border-radius:12px;padding:12px 16px;background:#2a3640;color:var(--ink);min-height:48px}
+  button.main{background:var(--acc);color:#06201a}
+  button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="stage">
+  <video id="v" playsinline muted autoplay></video>
+  <canvas id="c"></canvas>
+  <div class="count"><b id="n">0</b><span>orang terlihat</span></div>
+  <div class="msg" id="msg">Siap. Ketuk Mulai kamera.</div>
+</div>
+<div class="bar">
+  <div class="stat">Terbanyak<strong id="max">0</strong></div>
+  <button id="flip" hidden>Putar kamera</button>
+  <button id="reset">Reset</button>
+  <button id="start" class="main">Mulai kamera</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script>
+(function(){
+  var v=document.getElementById('v'), c=document.getElementById('c'), ctx=c.getContext('2d');
+  var nEl=document.getElementById('n'), maxEl=document.getElementById('max'), msg=document.getElementById('msg');
+  var startBtn=document.getElementById('start'), flipBtn=document.getElementById('flip'), resetBtn=document.getElementById('reset');
+  var model=null, stream=null, facing='environment', maxSeen=0, running=false;
+
+  function say(t,err){msg.textContent=t;msg.className='msg'+(err?' err':'');msg.hidden=!t}
+
+  async function loadModel(){
+    if(model) return model;
+    if(!window.cocoSsd){throw new Error('Pustaka AI gagal dimuat. Periksa koneksi internet lalu muat ulang halaman.')}
+    say('Memuat model AI (sekali saja, butuh internet)...');
+    model=await cocoSsd.load({base:'lite_mobilenet_v2'});
+    return model;
+  }
+
+  async function openCamera(){
+    if(stream){stream.getTracks().forEach(function(t){t.stop()})}
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+      throw new Error('Kamera tidak bisa diakses. Buka halaman ini lewat alamat https:// (bukan file lokal).');
+    }
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:1280},height:{ideal:720}},audio:false});
+    v.srcObject=stream;
+    await v.play();
+    v.style.transform=facing==='user'?'scaleX(-1)':'none';
+    c.style.transform=v.style.transform;
+  }
+
+  function draw(people){
+    var w=v.videoWidth,h=v.videoHeight;
+    if(!w) return;
+    c.width=w;c.height=h;
+    ctx.clearRect(0,0,w,h);
+    ctx.lineWidth=Math.max(3,w/320);
+    ctx.strokeStyle='#3fd0b0';
+    ctx.fillStyle='#3fd0b0';
+    ctx.font='bold '+Math.round(w/32)+'px system-ui';
+    people.forEach(function(p,i){
+      var b=p.bbox;
+      ctx.strokeRect(b[0],b[1],b[2],b[3]);
+      var label=String(i+1);
+      var tw=ctx.measureText(label).width+14,th=Math.round(w/26);
+      ctx.fillRect(b[0],Math.max(0,b[1]-th),tw,th);
+      ctx.fillStyle='#06201a';
+      ctx.fillText(label,b[0]+7,Math.max(th-6,b[1]-6));
+      ctx.fillStyle='#3fd0b0';
+    });
+  }
+
+  async function loop(){
+    if(!running) return;
+    try{
+      var preds=await model.detect(v);
+      var people=preds.filter(function(p){return p.class==='person'&&p.score>=0.5});
+      nEl.textContent=people.length;
+      if(people.length>maxSeen){maxSeen=people.length;maxEl.textContent=maxSeen}
+      draw(people);
+    }catch(e){}
+    setTimeout(function(){requestAnimationFrame(loop)},120);
+  }
+
+  startBtn.onclick=async function(){
+    startBtn.disabled=true;
+    try{
+      await loadModel();
+      say('Membuka kamera...');
+      await openCamera();
+      say('');
+      running=true;
+      startBtn.hidden=true;
+      flipBtn.hidden=false;
+      loop();
+    }catch(e){
+      var m=e&&e.name==='NotAllowedError'?'Izin kamera ditolak. Izinkan kamera di pengaturan browser, lalu coba lagi.':(e&&e.message||'Terjadi kesalahan.');
+      say(m,true);
+      startBtn.disabled=false;
+    }
+  };
+
+  flipBtn.onclick=async function(){
+    facing=facing==='environment'?'user':'environment';
+    try{await openCamera()}catch(e){say('Tidak bisa berpindah kamera.',true)}
+  };
+
+  resetBtn.onclick=function(){maxSeen=0;maxEl.textContent='0';nEl.textContent='0'};
+
+  document.addEventListener('visibilitychange',function(){
+    if(document.hidden){running=false}
+    else if(stream&&model&&!running){running=true;loop()}
+  });
+})();
+</script>
+</body>
+</html>
