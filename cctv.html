@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kamera AI</title>
+<style>
+  :root{--bg:#10151a;--panel:#1b232b;--line:#2a3640;--ink:#eef3f6;--mute:#8fa0ad;--acc:#3fd0b0;--warn:#ffb454;--blue:#8ab4ff;color-scheme:dark}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  body{padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+  .stage{position:relative;height:56vh;height:56dvh;background:#000;touch-action:manipulation}
+  video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+  .hud{position:absolute;left:10px;top:10px;display:flex;gap:8px;flex-wrap:wrap;pointer-events:none}
+  .pill{background:rgba(16,21,26,.84);border-radius:12px;padding:6px 12px;font-size:14px;color:var(--mute)}
+  .pill b{font-size:26px;color:var(--ink);font-variant-numeric:tabular-nums;margin-right:4px}
+  .pill.o b{color:var(--acc)}.pill.k b{color:var(--warn)}.pill.h b{color:var(--blue)}
+  .msg{position:absolute;left:10px;right:10px;bottom:10px;background:rgba(16,21,26,.9);border-radius:12px;padding:10px 14px;font-size:14px;line-height:1.4}
+  .msg.err{color:var(--warn)}
+  .center{position:absolute;inset:0;display:grid;place-items:center}
+  .wrap{padding:12px;display:grid;gap:12px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .cell{background:var(--panel);border-radius:12px;padding:10px;font-size:13px;color:var(--mute)}
+  .cell strong{display:block;font-size:24px;color:var(--ink);font-variant-numeric:tabular-nums}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  button,select{font:inherit;font-size:15px;font-weight:600;border:0;border-radius:12px;padding:0 14px;min-height:46px;background:var(--line);color:var(--ink)}
+  button.on{background:var(--acc);color:#06201a}
+  button.main{background:var(--acc);color:#06201a;padding:0 28px;min-height:54px;font-size:17px}
+  button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+  .lbl{font-size:13px;color:var(--mute);margin-bottom:6px}
+  input[type=range]{width:100%;accent-color:var(--acc)}
+  ul{list-style:none;margin:0;padding:0;max-height:190px;overflow:auto;background:var(--panel);border-radius:12px}
+  li{padding:9px 12px;font-size:14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px}
+  li span{color:var(--mute);font-variant-numeric:tabular-nums}
+  li.empty{color:var(--mute);justify-content:flex-start}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <video id="v" playsinline muted autoplay></video>
+  <canvas id="c"></canvas>
+  <div class="hud">
+    <div class="pill o"><b id="cO">0</b>orang</div>
+    <div class="pill k"><b id="cK">0</b>kendaraan</div>
+    <div class="pill h"><b id="cH">0</b>hewan</div>
+  </div>
+  <div class="center" id="startBox"><button class="main" id="start">Mulai kamera</button></div>
+  <div class="msg" id="msg">Ketuk Mulai kamera. Butuh internet saat pertama dibuka.</div>
+</div>
+
+<div class="wrap">
+  <div class="grid4">
+    <div class="cell">Masuk<strong id="sIn">0</strong></div>
+    <div class="cell">Keluar<strong id="sOut">0</strong></div>
+    <div class="cell">Di dalam<strong id="sIdx">0</strong></div>
+    <div class="cell">Orang terbanyak<strong id="sMax">0</strong></div>
+  </div>
+
+  <div>
+    <div class="lbl">Yang dideteksi</div>
+    <div class="row">
+      <button class="on" data-g="orang">Orang</button>
+      <button class="on" data-g="kendaraan">Kendaraan</button>
+      <button data-g="hewan">Hewan</button>
+    </div>
+  </div>
+
+  <div>
+    <div class="lbl">Garis hitung masuk dan keluar</div>
+    <div class="row">
+      <button id="setLine">Atur garis</button>
+      <button id="swap">Tukar arah</button>
+      <button id="alarm">Alarm: mati</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <button id="flip" hidden>Putar kamera</button>
+    <button id="snap">Simpan foto</button>
+    <button id="reset">Reset</button>
+  </div>
+
+  <div>
+    <div class="lbl">Kepekaan deteksi: <span id="thLbl">45</span>%</div>
+    <input type="range" id="th" min="25" max="80" value="45" aria-label="Kepekaan deteksi">
+  </div>
+
+  <div>
+    <div class="lbl">Model</div>
+    <select id="mdl" aria-label="Model">
+      <option value="lite_mobilenet_v2">Cepat (hemat baterai)</option>
+      <option value="mobilenet_v2">Akurat (lebih berat)</option>
+    </select>
+  </div>
+
+  <div>
+    <div class="lbl">Catatan kejadian</div>
+    <ul id="log"><li class="empty">Belum ada orang atau benda yang melewati garis.</li></ul>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script>
+(function(){
+  var $=function(i){return document.getElementById(i)};
+  var v=$('v'),c=$('c'),ctx=c.getContext('2d'),msg=$('msg');
+  var GROUPS={orang:['person'],kendaraan:['car','motorcycle','bicycle','bus','truck'],hewan:['dog','cat']};
+  var NAMA={person:'Orang',car:'Mobil',motorcycle:'Motor',bicycle:'Sepeda',bus:'Bus',truck:'Truk',dog:'Anjing',cat:'Kucing'};
+  var WARNA={orang:'#3fd0b0',kendaraan:'#ffb454',hewan:'#8ab4ff'};
+  var enabled={orang:true,kendaraan:true,hewan:false};
+  var model=null,stream=null,facing='environment',running=false,mirror=false;
+  var W=0,H=0,A=null,B=null,setStep=0,alarmOn=false,audio=null;
+  var tracks=[],nextId=1,inN=0,outN=0,maxO=0,thr=0.45,logs=[];
+
+  function say(t,err){msg.textContent=t;msg.className='msg'+(err?' err':'');msg.hidden=!t}
+  function grp(cls){for(var g in GROUPS){if(GROUPS[g].indexOf(cls)>-1)return g}return null}
+  function mx(x){return mirror?W-x:x}
+
+  async function loadModel(kind){
+    if(!window.cocoSsd) throw new Error('Pustaka AI gagal dimuat. Periksa internet lalu muat ulang halaman.');
+    say('Memuat model AI (butuh internet)...');
+    model=await cocoSsd.load({base:kind});
+  }
+
+  async function openCamera(){
+    if(stream) stream.getTracks().forEach(function(t){t.stop()});
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia) throw new Error('Kamera tidak bisa diakses. Buka lewat alamat https://.');
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:1280},height:{ideal:720}},audio:false});
+    v.srcObject=stream; await v.play();
+    mirror=(facing==='user'); W=0; A=B=null;
+  }
+
+  function side(x,y){return (B.x-A.x)*(y-A.y)-(B.y-A.y)*(x-A.x)}
+  function onSeg(x,y){var dx=B.x-A.x,dy=B.y-A.y,t=((x-A.x)*dx+(y-A.y)*dy)/(dx*dx+dy*dy);return t>-0.05&&t<1.05}
+
+  function beep(){
+    if(!alarmOn||!audio) return;
+    try{
+      var o=audio.createOscillator(),g=audio.createGain();
+      o.type='square';o.frequency.value=880;g.gain.value=0.15;
+      o.connect(g);g.connect(audio.destination);o.start();o.stop(audio.currentTime+0.25);
+    }catch(e){}
+  }
+
+  function addLog(text){
+    var d=new Date(),p=function(n){return String(n).padStart(2,'0')};
+    logs.unshift({t:p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds()),x:text});
+    if(logs.length>40) logs.pop();
+    $('log').innerHTML=logs.map(function(l){return '<li>'+l.x+'<span>'+l.t+'</span></li>'}).join('');
+  }
+
+  function track(dets){
+    tracks.forEach(function(t){t.m=false});
+    dets.forEach(function(d){
+      var cx=d.bbox[0]+d.bbox[2]/2,cy=d.bbox[1]+d.bbox[3]/2,best=null,bd=1e9;
+      tracks.forEach(function(t){
+        if(t.m||t.cls!==d.class) return;
+        var dist=Math.hypot(t.cx-cx,t.cy-cy);
+        if(dist<bd){bd=dist;best=t}
+      });
+      var lim=Math.max(d.bbox[2],d.bbox[3])*0.8;
+      if(best&&bd<lim){best.px=best.cx;best.py=best.cy;best.cx=cx;best.cy=cy;best.bbox=d.bbox;best.m=true;best.lost=0;d.t=best}
+      else{var t={id:nextId++,cls:d.class,cx:cx,cy:cy,px:cx,py:cy,bbox:d.bbox,m:true,lost:0,cool:0};tracks.push(t);d.t=t}
+    });
+    tracks.forEach(function(t){if(!t.m)t.lost++;if(t.cool>0)t.cool--});
+    tracks=tracks.filter(function(t){return t.lost<10});
+  }
+
+  function crossing(){
+    tracks.forEach(function(t){
+      if(t.lost||t.cool) return;
+      var s0=side(t.px,t.py),s1=side(t.cx,t.cy);
+      if(s0*s1<0&&onSeg(t.cx,t.cy)){
+        t.cool=15;
+        var masuk=s1>0;
+        if(masuk)inN++;else outN++;
+        addLog((NAMA[t.cls]||t.cls)+(masuk?' masuk':' keluar'));
+        beep();
+      }
+    });
+    $('sIn').textContent=inN;$('sOut').textContent=outN;$('sIdx').textContent=Math.max(0,inN-outN);
+  }
+
+  function draw(dets){
+    c.width=W;c.height=H;ctx.clearRect(0,0,W,H);
+    var sc=W/640,lw=Math.max(3,3*sc);
+    ctx.font='bold '+Math.round(16*sc)+'px system-ui';ctx.lineWidth=lw;
+    dets.forEach(function(d){
+      var b=d.bbox,col=WARNA[grp(d.class)],x=mx(b[0]+(mirror?b[2]:0));
+      var left=mirror?mx(b[0]+b[2]):b[0];
+      ctx.strokeStyle=col;ctx.strokeRect(left,b[1],b[2],b[3]);
+      var label=(NAMA[d.class]||d.class)+' #'+d.t.id,tw=ctx.measureText(label).width+12,th=Math.round(22*sc);
+      ctx.fillStyle=col;ctx.fillRect(left,Math.max(0,b[1]-th),tw,th);
+      ctx.fillStyle='#06201a';ctx.fillText(label,left+6,Math.max(th-6*sc,b[1]-6*sc));
+    });
+    if(A&&B){
+      ctx.strokeStyle='#ff5d73';ctx.lineWidth=lw;ctx.setLineDash([14*sc,8*sc]);
+      ctx.beginPath();ctx.moveTo(mx(A.x),A.y);ctx.lineTo(mx(B.x),B.y);ctx.stroke();ctx.setLineDash([]);
+      var dx=B.x-A.x,dy=B.y-A.y,L=Math.hypot(dx,dy),nx=-dy/L,ny=dx/L,mxp=(A.x+B.x)/2,myp=(A.y+B.y)/2,len=46*sc;
+      var tx=mxp+nx*len,ty=myp+ny*len;
+      ctx.beginPath();ctx.moveTo(mx(mxp),myp);ctx.lineTo(mx(tx),ty);ctx.stroke();
+      ctx.fillStyle='#ff5d73';ctx.beginPath();
+      ctx.arc(mx(tx),ty,7*sc,0,7);ctx.fill();
+      ctx.fillText('masuk',mx(tx)+10*sc,ty+5*sc);
+      ctx.beginPath();ctx.arc(mx(A.x),A.y,7*sc,0,7);ctx.arc(mx(B.x),B.y,7*sc,0,7);ctx.fill();
+    }
+  }
+
+  async function loop(){
+    if(!running) return;
+    try{
+      if(v.videoWidth&&!W){W=v.videoWidth;H=v.videoHeight}
+      if(W){
+        if(!A){A={x:W*0.1,y:H*0.5};B={x:W*0.9,y:H*0.5}}
+        var preds=await model.detect(v,20);
+        var dets=preds.filter(function(p){var g=grp(p.class);return g&&enabled[g]&&p.score>=thr});
+        track(dets);crossing();draw(dets);
+        var cnt={orang:0,kendaraan:0,hewan:0};
+        dets.forEach(function(d){cnt[grp(d.class)]++});
+        $('cO').textContent=cnt.orang;$('cK').textContent=cnt.kendaraan;$('cH').textContent=cnt.hewan;
+        if(cnt.orang>maxO){maxO=cnt.orang;$('sMax').textContent=maxO}
+      }
+    }catch(e){}
+    setTimeout(function(){requestAnimationFrame(loop)},100);
+  }
+
+  $('start').onclick=async function(){
+    $('start').disabled=true;
+    try{
+      audio=audio||new (window.AudioContext||window.webkitAudioContext)();
+      await loadModel($('mdl').value);
+      say('Membuka kamera...');
+      await openCamera();
+      say('');$('startBox').hidden=true;$('flip').hidden=false;
+      running=true;loop();
+    }catch(e){
+      say(e&&e.name==='NotAllowedError'?'Izin kamera ditolak. Izinkan kamera di pengaturan browser, lalu coba lagi.':(e&&e.message||'Terjadi kesalahan.'),true);
+      $('start').disabled=false;
+    }
+  };
+
+  $('flip').onclick=async function(){
+    facing=facing==='environment'?'user':'environment';
+    try{await openCamera()}catch(e){say('Tidak bisa berpindah kamera.',true)}
+  };
+
+  document.querySelectorAll('[data-g]').forEach(function(b){
+    b.onclick=function(){var g=b.dataset.g;enabled[g]=!enabled[g];b.classList.toggle('on',enabled[g])};
+  });
+
+  $('setLine').onclick=function(){
+    if(!W){say('Mulai kamera dulu.',true);return}
+    setStep=1;say('Ketuk titik awal garis di layar.');
+  };
+  $('stage').addEventListener('pointerdown',function(e){
+    if(!setStep||!W) return;
+    var r=c.getBoundingClientRect(),s=Math.min(r.width/W,r.height/H);
+    var x=(e.clientX-r.left-(r.width-W*s)/2)/s,y=(e.clientY-r.top-(r.height-H*s)/2)/s;
+    if(mirror) x=W-x;
+    x=Math.max(0,Math.min(W,x));y=Math.max(0,Math.min(H,y));
+    if(setStep===1){A={x:x,y:y};B={x:x,y:y};setStep=2;say('Sekarang ketuk titik akhir garis.')}
+    else{B={x:x,y:y};if(Math.hypot(B.x-A.x,B.y-A.y)<20){B={x:A.x+40,y:A.y}}setStep=0;say('Garis siap. Panah menunjukkan arah masuk.');setTimeout(function(){if(!setStep)say('')},3000)}
+  });
+  $('swap').onclick=function(){if(A&&B){var t=A;A=B;B=t}};
+
+  $('alarm').onclick=function(){
+    alarmOn=!alarmOn;this.textContent='Alarm: '+(alarmOn?'nyala':'mati');this.classList.toggle('on',alarmOn);
+    audio=audio||new (window.AudioContext||window.webkitAudioContext)();
+    if(alarmOn)beep();
+  };
+
+  $('snap').onclick=function(){
+    if(!W){say('Mulai kamera dulu.',true);return}
+    var t=document.createElement('canvas');t.width=W;t.height=H;var x=t.getContext('2d');
+    if(mirror){x.translate(W,0);x.scale(-1,1)}
+    x.drawImage(v,0,0,W,H);x.setTransform(1,0,0,1,0,0);x.drawImage(c,0,0);
+    t.toBlob(function(b){
+      var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='foto-'+Date.now()+'.jpg';
+      document.body.appendChild(a);a.click();a.remove();
+    },'image/jpeg',0.9);
+  };
+
+  $('reset').onclick=function(){
+    inN=outN=maxO=0;tracks=[];logs=[];
+    ['sIn','sOut','sIdx','sMax'].forEach(function(i){$(i).textContent='0'});
+    $('log').innerHTML='<li class="empty">Belum ada orang atau benda yang melewati garis.</li>';
+  };
+
+  $('th').oninput=function(){thr=this.value/100;$('thLbl').textContent=this.value};
+
+  $('mdl').onchange=async function(){
+    if(!running) return;
+    running=false;
+    try{await loadModel(this.value);say('')}catch(e){say(e.message,true)}
+    running=true;loop();
+  };
+
+  document.addEventListener('visibilitychange',function(){
+    if(document.hidden){running=false}
+    else if(stream&&model&&!running){running=true;loop()}
+  });
+})();
+</script>
+</body>
+</html>
